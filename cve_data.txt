@@ -1,0 +1,9 @@
+CVE-2021-44228 (Log4Shell) is a critical remote code execution vulnerability in Apache Log4j 2.
+Impact: Attackers can execute arbitrary code by logging a specific string.
+Remediation: Upgrade to Log4j 2.17.1 or higher immediately. Remove the JndiLookup class if upgrade is not possible.
+Severity: Critical (CVSS 10.0).
+
+CVE-2023-23397 is a privilege escalation vulnerability in Microsoft Outlook.
+Impact: An attacker can send a malicious email that triggers a hash leak without user interaction.
+Remediation: Apply the Microsoft March 2023 security update. Block TCP 445 outbound.
+Severity: Critical (CVSS 9.8).
