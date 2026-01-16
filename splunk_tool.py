@@ -1,30 +1,47 @@
-import json
+import streamlit as st
 import time
-from datetime import datetime
-import random
+import pandas as pd
+
+# --- CONFIGURATION ---
+st.set_page_config(
+    page_title="Splunk Threat Hunter",
+    page_icon="🛡️",
+    layout="wide"
+)
+
+# Custom CSS for that "Cyber Security" look
+st.markdown("""
+    <style>
+    .stApp {
+        background-color: #0f172a;
+        color: #e2e8f0;
+    }
+    .stMetric {
+        background-color: #1e293b;
+        border: 1px solid #334155;
+        padding: 15px;
+        border-radius: 8px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- 1. THE "MOCK" SPLUNK API ---
-# In a real job, this would be a URL like 'https://splunk-instance:8089'
-# We simulate the API response so the code runs without a server.
 def mock_splunk_api_query(query_str):
-    print(f"📡 Connecting to Splunk API...")
-    print(f"🔎 Running Search: '{query_str}'")
-    time.sleep(1.5) # Fake network delay
+    with st.spinner(f"📡 Connecting to Splunk API... Running: '{query_str}'"):
+        time.sleep(1.5) # Fake network delay
     
     # Simulate a JSON response from Splunk
     return [
         {"timestamp": "2024-01-14T10:01:00", "event": "Failed Login", "user": "admin", "src_ip": "192.168.1.5", "status": "401"},
         {"timestamp": "2024-01-14T10:01:02", "event": "Failed Login", "user": "admin", "src_ip": "192.168.1.5", "status": "401"},
-        {"timestamp": "2024-01-14T10:01:05", "event": "Failed Login", "user": "root",  "src_ip": "45.33.22.11", "status": "401"}, # <-- ATTACKER
+        {"timestamp": "2024-01-14T10:01:05", "event": "Failed Login", "user": "root",  "src_ip": "45.33.22.11", "status": "401"},
         {"timestamp": "2024-01-14T10:01:06", "event": "Failed Login", "user": "root",  "src_ip": "45.33.22.11", "status": "401"},
         {"timestamp": "2024-01-14T10:01:07", "event": "Failed Login", "user": "root",  "src_ip": "45.33.22.11", "status": "401"},
         {"timestamp": "2024-01-14T10:02:00", "event": "Success Login", "user": "edgar", "src_ip": "10.0.0.5",    "status": "200"}
     ]
 
 # --- 2. THREAT INTEL ENRICHMENT ---
-# Simulate checking an IP against a Threat Feed (like VirusTotal)
 def check_ip_reputation(ip_address):
-    # In real life, this requests.get('https://virustotal.com/api/...')
     known_bad_ips = ["45.33.22.11", "103.4.5.6"]
     
     if ip_address in known_bad_ips:
@@ -34,40 +51,67 @@ def check_ip_reputation(ip_address):
     else:
         return "UNKNOWN"
 
-# --- 3. THE AUTOMATION LOGIC ---
+# --- 3. THE UI LAYOUT ---
 def main():
-    print("🛡️  STARTING AUTOMATED THREAT HUNT\n")
+    st.title("🛡️ Automated Threat Hunt Dashboard")
+    st.markdown("### Integration: Splunk Enterprise Security")
     
-    # A. Query Splunk
-    search_query = 'search index=security event="Failed Login" | stats count by src_ip'
-    logs = mock_splunk_api_query(search_query)
+    # Sidebar Controls
+    st.sidebar.header("Search Parameters")
+    index = st.sidebar.text_input("Splunk Index", "security")
+    event_type = st.sidebar.selectbox("Event Type", ["Failed Login", "Malware Detected", "Data Exfiltration"])
     
-    print(f"\n📥 Retrieved {len(logs)} logs from Splunk.\n")
-    
-    # B. Parse & Analyze
-    print("⚙️  Parsing logs and enriching IOCs...\n")
-    suspicious_ips = {}
-    
-    for log in logs:
-        if log['event'] == "Failed Login":
-            ip = log['src_ip']
-            # Count the failures
-            suspicious_ips[ip] = suspicious_ips.get(ip, 0) + 1
+    # The "Run" Button
+    if st.sidebar.button("🚀 Run Threat Hunt"):
+        
+        # A. Query Splunk
+        search_query = f'search index={index} event="{event_type}" | stats count by src_ip'
+        st.info(f"Executing SPL: `{search_query}`")
+        
+        logs = mock_splunk_api_query(search_query)
+        df_logs = pd.DataFrame(logs)
+        
+        # Display Raw Data
+        st.subheader(f"📥 Retrieved {len(logs)} logs")
+        st.dataframe(df_logs, use_container_width=True)
+        
+        # B. Parse & Analyze
+        st.markdown("---")
+        st.subheader("⚙️ Analysis & IOC Enrichment")
+        
+        suspicious_ips = {}
+        results = []
+        
+        # Logic to count failures
+        for log in logs:
+            if log['event'] == "Failed Login":
+                ip = log['src_ip']
+                suspicious_ips[ip] = suspicious_ips.get(ip, 0) + 1
 
-    # C. Threshold & Alert
-    print("🚨 ALERT REPORT:")
-    print("-" * 60)
-    print(f"{'SOURCE IP':<20} | {'FAILURES':<10} | {'THREAT INTEL'}")
-    print("-" * 60)
-    
-    for ip, count in suspicious_ips.items():
-        if count >= 3: # Threshold: 3 failed attempts
-            # D. Enrich
+        # C. Display Alerts
+        cols = st.columns(3)
+        
+        for ip, count in suspicious_ips.items():
             intel = check_ip_reputation(ip)
-            print(f"{ip:<20} | {count:<10} | {intel}")
             
-            if "CRITICAL" in intel:
-                print(f"   >>> ACTION: Automating Firewall Block for {ip}...")
+            # Create a nice result object for the table
+            results.append({"Source IP": ip, "Failures": count, "Threat Intel": intel})
+            
+            # Display Critical Alerts Prominently
+            if count >= 3:
+                with cols[0]:
+                    if "CRITICAL" in intel:
+                        st.error(f"🚨 **CRITICAL ALERT**\n\nIP: `{ip}`\n\nFailures: {count}\n\nIntel: {intel}")
+                        st.button(f"🔥 Block {ip} on Firewall", key=ip)
+                    else:
+                        st.warning(f"⚠️ **Suspicious Activity**\n\nIP: `{ip}`\n\nFailures: {count}\n\nIntel: {intel}")
+
+        # Final Summary Table
+        st.markdown("### 📊 Threat Report Summary")
+        st.table(pd.DataFrame(results))
+
+    else:
+        st.write("👈 Click 'Run Threat Hunt' in the sidebar to start.")
 
 if __name__ == "__main__":
     main()
