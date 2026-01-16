@@ -9,3 +9,5 @@ chromadb
 python-dotenv
 openai
 tiktoken
+plotly
+watchdog
