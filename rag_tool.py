@@ -12,8 +12,7 @@ from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import Chroma
-# CHANGE: Import RetrievalChain from the new location
-from langchain.chains.retrieval import create_retrieval_chain
+from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -31,17 +30,25 @@ st.markdown("""
 st.title("🧠 CVE Intelligence Agent (RAG)")
 st.markdown("Ask questions about specific CVEs, and the AI will answer based on the indexed threat intelligence.")
 
-# --- SIDEBAR: API KEY ---
+# --- SMART KEY HANDLING ---
+# 1. Try to get key from Render Environment
 api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    api_key = st.sidebar.text_input("Enter OpenAI API Key", type="password")
 
-# --- INITIALIZATION (Cached to run once) ---
+# 2. If NOT found (e.g., local laptop), ask in sidebar
+if not api_key:
+    st.sidebar.warning("⚠️ No API Key found in Environment.")
+    api_key = st.sidebar.text_input("Enter OpenAI API Key", type="password")
+else:
+    # Key is found securely! No need to show it.
+    st.sidebar.success("✅ Secure API Connection Active")
+
+# --- INITIALIZATION (Cached) ---
 @st.cache_resource
 def initialize_rag_system(key):
     if not key:
         return None
     
+    # Manually set the key for LangChain to use
     os.environ["OPENAI_API_KEY"] = key
     
     # 1. CREATE DUMMY DATA IF FILE MISSING
@@ -49,12 +56,12 @@ def initialize_rag_system(key):
         with open("cve_data.txt", "w") as f:
             f.write("""
             CVE-2024-3094: XZ Utils Backdoor. Severity: Critical (CVSS 10.0). 
-            Description: Malicious code was discovered in the upstream tarballs of xz, starting with version 5.6.0. 
+            Description: Malicious code was discovered in the upstream tarballs of xz.
             Impact: Allows remote attackers to bypass SSH authentication.
-            Mitigation: Downgrade to xz version 5.4.6 or earlier immediately.
+            Mitigation: Downgrade to xz version 5.4.6 immediately.
             
             CVE-2023-4863: Heap buffer overflow in libwebp. Severity: High (CVSS 8.8).
-            Description: A heap buffer overflow in WebP allows a remote attacker to perform an out of bounds write via a crafted HTML page.
+            Description: A heap buffer overflow in WebP allows a remote attacker to perform an out of bounds write.
             Impact: Remote Code Execution (RCE) in Chrome, Firefox, and other browsers.
             """)
     
@@ -67,7 +74,6 @@ def initialize_rag_system(key):
     
     # 3. EMBED & STORE
     embeddings = OpenAIEmbeddings()
-    # Using a temporary directory for Chroma to avoid permission issues on Render
     db = Chroma.from_documents(texts, embeddings)
     retriever = db.as_retriever()
     
@@ -112,7 +118,6 @@ if api_key:
                 st.markdown(prompt)
 
             with st.chat_message("assistant"):
-                # Run the RAG chain
                 response = chain.invoke({"input": prompt})
                 st.markdown(response['answer'])
             
@@ -121,4 +126,4 @@ if api_key:
     except Exception as e:
         st.error(f"Error initializing RAG: {e}")
 else:
-    st.info("👈 Please enter your OpenAI API Key in the sidebar to activate the agent.")
+    st.info("👈 Waiting for API Key...")
