@@ -1,18 +1,18 @@
-﻿# --- Core UI (All Tools) ---
+﻿# CORE UI
 streamlit
 plotly
 watchdog
 
-# --- Data & Math (Anomaly Tool & Splunk Tool) ---
+# DATA
 pandas
 numpy
 scikit-learn
 
-# --- AI & Database (RAG Tool ONLY) ---
-langchain>=0.1.16
-langchain-community>=0.0.33
-langchain-openai>=0.1.3
-langchain-core
+# AI & DATABASE (Version Locked)
+langchain==0.1.16
+langchain-community==0.0.33
+langchain-openai==0.1.3
+langchain-core==0.1.45
 chromadb
 python-dotenv
 openai
