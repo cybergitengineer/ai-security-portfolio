@@ -1,7 +1,6 @@
+import streamlit as st
 import os
-from dotenv import load_dotenv
-
-# Modern Imports (LCEL)
+import tempfile
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -10,31 +9,66 @@ from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-# Load API Key
-load_dotenv()
+# --- CONFIGURATION ---
+st.set_page_config(page_title="CVE RAG Intelligence", page_icon="🧠", layout="wide")
 
-def main():
-    print("🔄 Loading Threat Intel Data...")
+# Custom CSS
+st.markdown("""
+    <style>
+    .stApp { background-color: #0f172a; color: #e2e8f0; }
+    .stChatMessage { background-color: #1e293b; border-radius: 10px; padding: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🧠 CVE Intelligence Agent (RAG)")
+st.markdown("Ask questions about specific CVEs, and the AI will answer based on the indexed threat intelligence.")
+
+# --- SIDEBAR: API KEY ---
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    api_key = st.sidebar.text_input("Enter OpenAI API Key", type="password")
+
+# --- INITIALIZATION (Cached to run once) ---
+@st.cache_resource
+def initialize_rag_system(key):
+    if not key:
+        return None
     
-    # 1. INGEST
+    os.environ["OPENAI_API_KEY"] = key
+    
+    # 1. CREATE DUMMY DATA IF FILE MISSING
+    if not os.path.exists("cve_data.txt"):
+        with open("cve_data.txt", "w") as f:
+            f.write("""
+            CVE-2024-3094: XZ Utils Backdoor. Severity: Critical (CVSS 10.0). 
+            Description: Malicious code was discovered in the upstream tarballs of xz, starting with version 5.6.0. 
+            Impact: Allows remote attackers to bypass SSH authentication.
+            Mitigation: Downgrade to xz version 5.4.6 or earlier immediately.
+            
+            CVE-2023-4863: Heap buffer overflow in libwebp. Severity: High (CVSS 8.8).
+            Description: A heap buffer overflow in WebP allows a remote attacker to perform an out of bounds write via a crafted HTML page.
+            Impact: Remote Code Execution (RCE) in Chrome, Firefox, and other browsers.
+            """)
+    
+    # 2. LOAD & PROCESS
     loader = TextLoader("cve_data.txt")
     documents = loader.load()
     
-    # 2. SPLIT
     text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
     texts = text_splitter.split_documents(documents)
     
-    # 3. EMBED
-    print("🧠 Indexing data into Vector Store...")
+    # 3. EMBED & STORE
     embeddings = OpenAIEmbeddings()
+    # Using a temporary directory for Chroma to avoid permission issues on Render
     db = Chroma.from_documents(texts, embeddings)
     retriever = db.as_retriever()
     
-    # 4. PROMPT (The "Brain")
-    # We tell the AI exactly how to behave
+    # 4. SETUP LLM CHAIN
+    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
+    
     prompt = ChatPromptTemplate.from_template("""
     You are a Cyber Threat Intelligence Analyst. 
-    Answer the user's question based ONLY on the following context context.
+    Answer the user's question based ONLY on the following context.
     If the answer is not in the context, say "I don't have intel on that."
     
     <context>
@@ -44,28 +78,39 @@ def main():
     Question: {input}
     """)
     
-    # 5. CHAIN (The Modern "LCEL" Way)
-    llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
-    
-    # Create the "Document Chain" (Handles the text)
     document_chain = create_stuff_documents_chain(llm, prompt)
-    
-    # Create the "Retrieval Chain" (Connects DB -> Document Chain)
     retrieval_chain = create_retrieval_chain(retriever, document_chain)
     
-    print("✅ System Ready! Ask about a CVE (or type 'exit').")
-    
-    # 6. INTERACT
-    while True:
-        query = input("\n🔎 Query: ")
-        if query.lower() == 'exit':
-            break
-        
-        try:
-            response = retrieval_chain.invoke({"input": query})
-            print(f"🤖 AI Response: {response['answer']}")
-        except Exception as e:
-            print(f"Error: {e}")
+    return retrieval_chain
 
-if __name__ == "__main__":
-    main()
+# --- MAIN APP ---
+if api_key:
+    try:
+        chain = initialize_rag_system(api_key)
+        
+        # Chat History
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
+        # Display Chat
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        # User Input
+        if prompt := st.chat_input("Ask about a CVE (e.g., 'What is CVE-2024-3094?')"):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                # Run the RAG chain
+                response = chain.invoke({"input": prompt})
+                st.markdown(response['answer'])
+            
+            st.session_state.messages.append({"role": "assistant", "content": response['answer']})
+            
+    except Exception as e:
+        st.error(f"Error initializing RAG: {e}")
+else:
+    st.info("👈 Please enter your OpenAI API Key in the sidebar to activate the agent.")

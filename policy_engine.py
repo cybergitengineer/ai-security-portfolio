@@ -1,15 +1,26 @@
+import streamlit as st
 import json
 
-# --- 1. THE "BAD" DEPLOYMENT (Simulation) ---
-# This simulates a developer trying to deploy an insecure app.
-insecure_deployment = {
+st.set_page_config(page_title="OPA Policy Engine", page_icon="⚖️", layout="wide")
+
+st.markdown("""
+    <style>
+    .stApp { background-color: #0f172a; color: #e2e8f0; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("⚖️ Zero Trust Policy Engine (OPA)")
+st.markdown("Validate Kubernetes manifests against security policies (Non-Root, Governance, etc).")
+
+# --- DEFAULT INSECURE CONFIG ---
+default_manifest = {
     "apiVersion": "v1",
     "kind": "Pod",
     "metadata": {
         "name": "nginx-frontend",
         "labels": {
             "app": "frontend"
-            # MISSING: "CostCenter" label
+            # Missing "CostCenter"
         }
     },
     "spec": {
@@ -18,54 +29,52 @@ insecure_deployment = {
                 "name": "nginx",
                 "image": "nginx:latest",
                 "securityContext": {
-                    "runAsUser": 0,  # <--- DANGER: Running as ROOT!
-                    "privileged": True # <--- DANGER: Full Admin Access!
+                    "runAsUser": 0,  # Root User (Bad)
+                    "privileged": True # Privileged (Bad)
                 }
             }
         ]
     }
 }
 
-# --- 2. THE POLICY ENGINE (OPA Logic) ---
-def evaluate_policy(workload):
-    violations = []
+# --- UI LAYOUT ---
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("📝 Deployment Manifest (JSON)")
+    # Allow user to edit the JSON
+    json_input = st.text_area("Edit Manifest", json.dumps(default_manifest, indent=4), height=400)
+
+with col2:
+    st.subheader("🔍 Policy Audit Results")
     
-    print(f"🕵️  Scanning Workload: {workload['metadata']['name']}...")
-    
-    # RULE 1: Enforce Non-Root Users
-    # We loop through every container in the pod
-    for container in workload['spec']['containers']:
-        user_id = container.get('securityContext', {}).get('runAsUser', 0)
-        privileged = container.get('securityContext', {}).get('privileged', False)
-        
-        if user_id == 0:
-            violations.append(f"❌ BLOCK: Container '{container['name']}' is running as ROOT (UID 0). Must be UID 1000+.")
+    if st.button("Run Policy Scan"):
+        try:
+            workload = json.loads(json_input)
+            violations = []
             
-        if privileged:
-            violations.append(f"❌ BLOCK: Container '{container['name']}' is running as PRIVILEGED mode.")
-
-    # RULE 2: Enforce Governance Labels
-    labels = workload['metadata'].get('labels', {})
-    if "CostCenter" not in labels:
-        violations.append("❌ BLOCK: Missing required metadata label: 'CostCenter'.")
-
-    return violations
-
-# --- 3. THE ADMISSION CONTROLLER (Decision) ---
-def main():
-    print("🛡️  ZERO TRUST ADMISSION CONTROLLER ONLINE")
-    print("-" * 50)
-    
-    # Run the check
-    errors = evaluate_policy(insecure_deployment)
-    
-    if len(errors) > 0:
-        print("\n⛔ ADMISSION DENIED! Security Policies Violated:")
-        for err in errors:
-            print(err)
-        print("\n>>> ACTION: Deployment rejected by OPA Gatekeeper.")
-    else:
-        print("\n✅ ADMISSION ALLOWED. Workload is secure.")
-
-if __name__ == "__main__":
-    main()
+            # --- POLICY LOGIC ---
+            # 1. Check Root User
+            for container in workload.get('spec', {}).get('containers', []):
+                sec_ctx = container.get('securityContext', {})
+                if sec_ctx.get('runAsUser', 0) == 0:
+                    violations.append(f"❌ BLOCK: Container '{container['name']}' running as ROOT (UID 0).")
+                if sec_ctx.get('privileged', False):
+                    violations.append(f"❌ BLOCK: Container '{container['name']}' is PRIVILEGED.")
+            
+            # 2. Check Labels
+            labels = workload.get('metadata', {}).get('labels', {})
+            if "CostCenter" not in labels:
+                violations.append("❌ BLOCK: Missing governance label: 'CostCenter'.")
+            
+            # --- DISPLAY RESULTS ---
+            if violations:
+                st.error("⛔ ADMISSION DENIED")
+                for v in violations:
+                    st.write(v)
+            else:
+                st.success("✅ ADMISSION ALLOWED")
+                st.write("Workload complies with all security policies.")
+                
+        except json.JSONDecodeError:
+            st.error("Invalid JSON format. Please check syntax.")
